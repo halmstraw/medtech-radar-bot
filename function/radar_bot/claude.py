@@ -90,23 +90,12 @@ def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any
             logger.info("Claude final response: %s", repr(text_content[:400]))
             return _extract_json(text_content)
 
-        elif response.stop_reason == "tool_use":
-            # Claude wants to search — append its response and the tool results
+        elif response.stop_reason in ("tool_use", "pause_turn"):
+            # Web search is server-side — Anthropic executes it and embeds
+            # results directly in response.content. We just append Claude's
+            # full response as the assistant turn and call again.
+            logger.info("Claude searching (stop_reason=%s, iteration=%d)", response.stop_reason, iterations)
             messages.append({"role": "assistant", "content": response.content})
-
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    logger.info("Claude searching for: %s", getattr(block, "input", {}))
-                    # The web_search tool is server-side — results come back
-                    # automatically in the next response via tool_result blocks
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "Search executed.",
-                    })
-
-            messages.append({"role": "user", "content": tool_results})
 
         else:
             logger.error("Unexpected stop_reason: %s", response.stop_reason)
