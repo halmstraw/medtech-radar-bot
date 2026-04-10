@@ -20,11 +20,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r function/requirements.txt
 
-      - name: Deploy to Azure Functions
+      - name: Azure Login
         if: github.ref == 'refs/heads/main'
-        uses: Azure/functions-action@v1
+        uses: azure/login@v2
         with:
-          app-name: medtech-radar-bot
-          package: function
-          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
-          respect-funcignore: true
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Package and deploy
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd function
+          zip -r ../deploy.zip .
+          az functionapp deployment source config-zip \
+            --resource-group medtech-radar-bot \
+            --name medtech-radar-bot \
+            --src ../deploy.zip
