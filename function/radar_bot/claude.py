@@ -43,23 +43,14 @@ When given a technology suggestion:
 4. Write a concise 2-3 sentence description explaining the placement
 5. Suggest relevant tags from: ci-cd, devops, cloud, ml, mobile, testing, compliance, security, infrastructure, framework, language, monitoring, observability, regulated, governance, process
 
-Respond ONLY with a JSON object in this exact format, no markdown fences, no preamble:
-{
-  "title": "Technology Name",
-  "quadrant": "tools",
-  "ring": "assess",
-  "tags": ["tag1", "tag2"],
-  "reasoning": "One sentence explaining why this quadrant and ring.",
-  "description": "2-3 sentences for the radar entry body.",
-  "entry_markdown": "---\\ntitle: \\"Technology Name\\"\\nring: assess\\nquadrant: tools\\ntags: [tag1, tag2]\\n---\\n\\n2-3 sentence description."
-}"""
+Respond ONLY with a valid JSON object. No markdown fences, no preamble, no explanation — just the JSON:
+{"title": "Technology Name", "quadrant": "tools", "ring": "assess", "tags": ["tag1", "tag2"], "reasoning": "One sentence.", "description": "2-3 sentences.", "entry_markdown": "---\\ntitle: \\"Technology Name\\"\\nring: assess\\nquadrant: tools\\ntags: [tag1, tag2]\\n---\\n\\n2-3 sentences."}"""
 
 
 def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any]:
     """Ask Claude to research a technology and recommend placement."""
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
     prompt = SYSTEM_PROMPT.format(radar_context=radar_context)
 
     logger.info("Calling Claude API for suggestion: %s", suggestion[:100])
@@ -72,7 +63,11 @@ def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any
             messages=[
                 {
                     "role": "user",
-                    "content": f"Please research and recommend radar placement for: {suggestion}"
+                    "content": f"Suggest radar placement for: {suggestion}"
+                },
+                {
+                    "role": "assistant",
+                    "content": "{"
                 }
             ],
         )
@@ -80,40 +75,25 @@ def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any
         logger.error("Claude API call failed: %s", str(e))
         raise
 
-    logger.info("Claude response stop_reason: %s", response.stop_reason)
+    logger.info("Claude stop_reason: %s", response.stop_reason)
 
-    # Extract text content from response
-    text_content = ""
+    # Extract text — we pre-filled the assistant turn with "{" so prepend it
+    text_content = "{"
     for block in response.content:
         if hasattr(block, "text"):
             text_content += block.text
 
-    logger.info("Claude raw response: %s", text_content[:500])
-
-    if not text_content.strip():
-        raise ValueError("Claude returned empty response")
-
-    logger.info("Claude raw response: %s", text_content[:500])
-
-    # Find the JSON object — extract everything between first { and last }
-    start = text_content.find("{")
-    end = text_content.rfind("}") + 1
-    if start == -1 or end == 0:
-        logger.error("No JSON object found in Claude response: %s", text_content[:500])
-        raise ValueError("Claude response contained no JSON object")
-
-    clean = text_content[start:end]
+    logger.info("Claude raw: %s", repr(text_content[:400]))
 
     try:
-        return json.loads(clean)
+        return json.loads(text_content)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse Claude JSON: %s\nExtracted: %s", e, clean[:500])
+        logger.error("JSON parse failed: %s | raw: %s", e, repr(text_content[:400]))
         raise
 
 
 def generate_entry(title: str, quadrant: str, ring: str, tags: list[str], description: str) -> str:
     """Generate the final .md file content for a radar entry."""
-
     tags_str = ", ".join(tags)
     return f"""---
 title: "{title}"
