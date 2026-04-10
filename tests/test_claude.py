@@ -157,32 +157,3 @@ class TestClaudeIntegration:
         print(f"\nClaude returned: {json.dumps(result, indent=2)}")
         assert_valid_recommendation(result)
         assert result["quadrant"] == "tools"
-
-    def test_raw_claude_response(self):
-        """
-        Diagnostic test — prints the raw Claude response so we can see
-        exactly what the API returns before any parsing.
-        """
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            pytest.skip("ANTHROPIC_API_KEY not set")
-
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=512,
-            system="Respond ONLY with a JSON object, no markdown fences, no preamble.",
-            messages=[
-                {"role": "user", "content": "Suggest radar placement for: Temporal workflow engine"}
-            ],
-        )
-
-        print(f"\nstop_reason: {response.stop_reason}")
-        for i, block in enumerate(response.content):
-            if hasattr(block, "text"):
-                print(f"block[{i}] repr: {repr(block.text[:400])}")
-
-        # This test always passes — it's diagnostic
-        assert response.stop_reason in {"end_turn", "max_tokens"}
