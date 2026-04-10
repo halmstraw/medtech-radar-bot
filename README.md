@@ -12,12 +12,56 @@ Send a technology suggestion via Telegram. The bot:
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    U([You on Telegram]) -->|message + webhook| F
+
+    subgraph Azure [Azure — medtech-radar-bot resource group]
+        F["Azure Function\nFlex Consumption · Python 3.11\n\n__init__.py — webhook auth\nbot.py — allowlist + routing\nclaude.py · github.py · telegram.py"]
+        KV["Key Vault\nTELEGRAM_BOT_TOKEN\nANTHROPIC_API_KEY\nGITHUB_TOKEN"]
+        AI["Application Insights\nLogs · traces · exceptions"]
+        KV -.->|secrets| F
+        F -.->|telemetry| AI
+    end
+
+    F -->|suggestion| C["Claude API\nclaude-sonnet-4-6\nResearch + recommend\nquadrant · ring · entry"]
+    C -->|recommendation JSON| F
+    F -->|reply + PR link| U
+
+    subgraph GitHub [GitHub — halmstraw/medtech-platform-docs]
+        GH["GitHub API\nRead radar context\nCreate branch · commit · PR"]
+        GA["GitHub Actions\nRebuild + deploy site\non PR merge"]
+        RD["radar .md files\nSource of truth"]
+        GH -->|on merge| GA
+        GA -->|deploy| RD
+        RD -->|context| GH
+    end
+
+    F -->|raise PR| GH
+
+    subgraph Deploy [CI/CD — halmstraw/medtech-radar-bot]
+        GHA["GitHub Actions\nZip deploy on push to main"]
+        CRED["AZURE_CREDENTIALS secret\nService principal"]
+        CRED -.->|auth| GHA
+        GHA -->|deploy| F
+    end
 ```
-Telegram → Azure Function (HTTP trigger)
-         → Claude API (web search + reasoning)
-         → GitHub API (read context, raise PR)
-         → Telegram (confirmation + PR link)
-```
+
+### Component responsibilities
+
+| Component | Responsibility | Key config |
+|---|---|---|
+| Azure Function | Receives Telegram webhook, orchestrates the flow, sends replies | `function/radar_bot/` |
+| `__init__.py` | HTTP entry point, validates webhook secret header | `TELEGRAM_WEBHOOK_SECRET` env var |
+| `bot.py` | Allowlist check, message routing, conversation logic | `ALLOWED_USER_IDS` set |
+| `claude.py` | Calls Claude API, parses JSON recommendation | `ANTHROPIC_API_KEY`, model `claude-sonnet-4-6` |
+| `github.py` | Fetches radar context, creates branch, commits entry, opens PR | `GITHUB_TOKEN` (contents + PRs write) |
+| `telegram.py` | Sends messages back to the user | `TELEGRAM_BOT_TOKEN` |
+| Azure Key Vault | Stores all secrets — not in environment variables directly | Linked via Function App config |
+| Application Insights | Logs, traces, exceptions — query via KQL | Auto-linked on Function App creation |
+| GitHub Actions (bot repo) | Deploys on push to main via zip deploy | `AZURE_CREDENTIALS` secret |
+| GitHub Actions (docs repo) | Rebuilds MkDocs + radar on PR merge to main | `AZURE_STATIC_WEB_APPS_API_TOKEN` |
+| radar .md files | One file per technology, frontmatter-driven | `radar/data/radar/YYYY-MM-DD/` |
 
 ## Stack
 
