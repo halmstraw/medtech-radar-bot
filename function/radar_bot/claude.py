@@ -93,23 +93,21 @@ def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any
     if not text_content.strip():
         raise ValueError("Claude returned empty response")
 
-    # Strip markdown fences if present
-    clean = text_content.strip()
-    if "```" in clean:
-        parts = clean.split("```")
-        for part in parts:
-            part = part.strip()
-            if part.startswith("json"):
-                part = part[4:].strip()
-            if part.startswith("{"):
-                clean = part
-                break
-    clean = clean.strip()
+    logger.info("Claude raw response: %s", text_content[:500])
+
+    # Find the JSON object — extract everything between first { and last }
+    start = text_content.find("{")
+    end = text_content.rfind("}") + 1
+    if start == -1 or end == 0:
+        logger.error("No JSON object found in Claude response: %s", text_content[:500])
+        raise ValueError("Claude response contained no JSON object")
+
+    clean = text_content[start:end]
 
     try:
         return json.loads(clean)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse Claude JSON response: %s\nRaw: %s", e, clean[:500])
+        logger.error("Failed to parse Claude JSON: %s\nExtracted: %s", e, clean[:500])
         raise
 
 
