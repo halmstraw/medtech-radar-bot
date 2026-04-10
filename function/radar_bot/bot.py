@@ -6,6 +6,13 @@ raises GitHub PR when confirmed.
 Conversation states:
   idle               — waiting for a new suggestion
   pending_confirmation — recommendation shown, waiting for yes/correction/cancel
+
+Commands:
+  /start, /help, ?   — show help
+  /status            — show current pending state
+  /reset, /cancel    — clear pending state
+  yes, ok, confirm   — raise PR for pending recommendation
+  no, cancel, abort  — cancel pending recommendation
 """
 
 import logging
@@ -22,15 +29,42 @@ from .state import get_state, set_state, clear_state
 
 logger = logging.getLogger(__name__)
 
-# Allowlist of Telegram user IDs permitted to use the bot
 ALLOWED_USER_IDS = {
     7773419043,  # Tim
 }
 
 CONFIRM_PHRASES = {"yes", "ok", "go", "raise pr", "submit", "confirm", "looks good"}
-CANCEL_PHRASES = {"no", "cancel", "stop", "abort"}
+CANCEL_PHRASES = {"no", "cancel", "stop", "abort", "/cancel", "/reset"}
+HELP_PHRASES = {"/help", "/start", "help", "?"}
+STATUS_PHRASES = {"/status", "status"}
 
 URL_PATTERN = re.compile(r'https?://\S+|www\.\S+|\S+\.\S+/\S*', re.IGNORECASE)
+
+HELP_TEXT = """\
+*Tech Radar Bot*
+
+Send me a technology to evaluate and I'll research it, recommend a quadrant and ring, then raise a GitHub PR when you confirm.
+
+*How to suggest a technology:*
+Just send the name or URL:
+  `Temporal`
+  `https://paperclip.ing`
+
+*When a recommendation is shown:*
+  *yes* — raise the PR
+  *no* / */reset* — cancel and start over
+  Anything else — I'll treat it as a correction and re-research
+
+*Commands:*
+  */help* — show this message
+  */status* — show your pending recommendation
+  */reset* — clear pending state and start over
+
+*Tips:*
+  • Include the URL for newer or obscure tools — I'll fetch the page directly
+  • Tell me what's wrong with a recommendation and I'll fix it
+  • PRs go to `halmstraw/medtech-platform-docs` for your review before merging\
+"""
 
 
 def handle_update(update: dict[str, Any]) -> None:
@@ -57,47 +91,81 @@ def handle_update(update: dict[str, Any]) -> None:
     text_lower = text.strip().lower()
     state = get_state(chat_id)
 
-    # --- Cancel always works regardless of state ---
+    # --- Commands — always available ---
+    if text_lower in HELP_PHRASES:
+        send_message(chat_id, HELP_TEXT)
+        return
+
+    if text_lower in STATUS_PHRASES:
+        _handle_status(chat_id, state)
+        return
+
     if text_lower in CANCEL_PHRASES:
         clear_state(chat_id)
-        send_message(chat_id, "Cancelled. Send me a technology to evaluate whenever you're ready.")
+        send_message(chat_id, "Cancelled. Send me a technology to evaluate, or /help for instructions.")
         return
 
     # --- Pending confirmation state ---
     if state and state.get("state") == "pending_confirmation":
-
         if text_lower in CONFIRM_PHRASES:
             _raise_pr(chat_id, state)
         else:
-            # Treat as a correction — re-research with the feedback
-            _handle_suggestion(chat_id, state["suggestion"], correction=text, url_content=state.get("url_content"))
+            send_message(chat_id, "Got it — adjusting the recommendation...")
+            _handle_suggestion(
+                chat_id,
+                state["suggestion"],
+                correction=text,
+                url_content=state.get("url_content"),
+            )
         return
 
-    # --- Idle state — new suggestion ---
+    # --- Idle — new suggestion ---
     _handle_suggestion(chat_id, text)
+
+
+def _handle_status(chat_id: int, state: dict | None) -> None:
+    """Show the current pending recommendation if any."""
+    if not state or state.get("state") != "pending_confirmation":
+        send_message(chat_id, "No pending recommendation. Send me a technology to evaluate.")
+        return
+
+    rec = state["recommendation"]
+    lines = [
+        "*Pending recommendation:*",
+        "",
+        f"*{rec['title']}* — {rec['quadrant']} / {rec['ring']}",
+        "",
+        "Reply *yes* to raise a PR, tell me what to change, or /reset to start over.",
+    ]
+    send_message(chat_id, "\n".join(lines))
 
 
 def _handle_suggestion(chat_id: int, text: str, correction: str | None = None, url_content: str | None = None) -> None:
     """Research a technology and recommend placement."""
 
-    # Detect URL in the suggestion if not already fetched
     if url_content is None:
         url = _extract_url(text)
         if url:
+            send_message(chat_id, f"Fetching {url}...")
             url_content = _fetch_url(url)
             if url_content:
-                logger.info("Fetched URL content for: %s (%d chars)", url, len(url_content))
+                logger.info("Fetched URL content (%d chars)", len(url_content))
+            else:
+                send_message(chat_id, "Couldn't fetch that URL — I'll rely on web search instead.")
 
-    send_message(chat_id, "On it — researching now...")
+    send_message(chat_id, "Researching now...")
 
     try:
         radar_context = get_radar_context()
     except Exception as e:
         logger.error("Failed to fetch radar context: %s", e)
-        send_message(chat_id, "Sorry, I couldn't fetch the current radar. Please try again.")
+        send_message(
+            chat_id,
+            "Sorry, I couldn't fetch the current radar from GitHub. "
+            "Check the GITHUB_TOKEN is valid, then try again."
+        )
         return
 
-    # Build the full suggestion string including any correction
     full_suggestion = text
     if correction:
         full_suggestion = f"{text}\n\nUser correction: {correction}"
@@ -110,10 +178,13 @@ def _handle_suggestion(chat_id: int, text: str, correction: str | None = None, u
         )
     except Exception as e:
         logger.error("Claude API error: %s", e)
-        send_message(chat_id, "Sorry, something went wrong with the research. Please try again.")
+        send_message(
+            chat_id,
+            "Sorry, the Claude API call failed. This is usually transient — please try again. "
+            "If it keeps happening check the ANTHROPIC_API_KEY."
+        )
         return
 
-    # Save state
     set_state(chat_id, {
         "state": "pending_confirmation",
         "suggestion": text,
@@ -133,7 +204,6 @@ def _raise_pr(chat_id: int, state: dict) -> None:
     send_message(chat_id, "Raising PR...")
 
     try:
-        # Generate filename from title
         slug = re.sub(r"[^a-z0-9]+", "-", rec["title"].lower()).strip("-")
         filename = f"{slug}.md"
         pr_url = raise_pr(
@@ -143,17 +213,22 @@ def _raise_pr(chat_id: int, state: dict) -> None:
             suggestion=suggestion,
         )
         clear_state(chat_id)
-        send_message(chat_id, f"PR raised: {pr_url}")
+        send_message(chat_id, f"PR raised: {pr_url}\n\nReview and merge to publish to the radar.")
     except Exception as e:
         logger.error("Failed to raise PR: %s", e)
-        send_message(chat_id, "Sorry, I couldn't raise the PR. Please try again.")
+        send_message(
+            chat_id,
+            "Sorry, I couldn't raise the PR. This is usually a GitHub token issue. "
+            "Check GITHUB_TOKEN has write access to medtech-platform-docs, then try again.\n\n"
+            "Your recommendation is still saved — reply *yes* to retry."
+        )
 
 
 def _extract_url(text: str) -> str | None:
     """Extract the first URL from a message."""
     match = URL_PATTERN.search(text)
     if match:
-        url = match.group(0)
+        url = match.group(0).rstrip(".,)")
         if not url.startswith("http"):
             url = "https://" + url
         return url
@@ -165,10 +240,8 @@ def _fetch_url(url: str) -> str | None:
     try:
         resp = http_requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-        # Strip HTML tags crudely — good enough for Claude to read
         text = re.sub(r"<[^>]+>", " ", resp.text)
         text = re.sub(r"\s+", " ", text).strip()
-        # Truncate to avoid token bloat
         return text[:8000]
     except Exception as e:
         logger.warning("Failed to fetch URL %s: %s", url, e)
@@ -190,6 +263,6 @@ def _format_recommendation(rec: dict) -> str:
         rec["entry_markdown"],
         "```",
         "",
-        "Reply *yes* to raise a PR, or tell me what to change.",
+        "Reply *yes* to raise a PR, tell me what to change, or /reset to start over.",
     ]
     return "\n".join(lines)

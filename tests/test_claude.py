@@ -17,6 +17,7 @@ Run integration test (requires ANTHROPIC_API_KEY):
 import json
 import os
 import sys
+import time
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "function"))
@@ -28,6 +29,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "function"))
 
 def parse_claude_response(text_content: str) -> dict:
     """Reproduce the JSON extraction logic from claude.py so we can test it."""
+    # Strip markdown fences if present
+    if "```" in text_content:
+        for block in text_content.split("```"):
+            block = block.strip()
+            if block.startswith("json"):
+                block = block[4:].strip()
+            if block.startswith("{"):
+                text_content = block
+                break
+
     start = text_content.find("{")
     end = text_content.rfind("}") + 1
     if start == -1 or end == 0:
@@ -146,6 +157,10 @@ class TestClaudeIntegration:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             pytest.skip("ANTHROPIC_API_KEY not set")
+
+        time.sleep(5)  # Avoid 529 overload from back-to-back API calls in CI
+
+        time.sleep(15)  # Avoid rate limit from previous integration test
 
         from radar_bot.claude import research_and_recommend
 

@@ -107,7 +107,21 @@ def research_and_recommend(suggestion: str, radar_context: str, url_content: str
 
 
 def _extract_json(text_content: str) -> dict[str, Any]:
-    """Extract and parse the JSON object from Claude's response."""
+    """Extract and parse the JSON object from Claude's response.
+
+    Handles: leading whitespace, markdown fences, preamble text, trailing text.
+    """
+    # Strip markdown fences if present
+    if "```" in text_content:
+        for block in text_content.split("```"):
+            block = block.strip()
+            if block.startswith("json"):
+                block = block[4:].strip()
+            if block.startswith("{"):
+                text_content = block
+                break
+
+    # Find outermost { } regardless of surrounding content
     start = text_content.find("{")
     end = text_content.rfind("}") + 1
     if start == -1 or end == 0:
