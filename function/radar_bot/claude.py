@@ -35,6 +35,8 @@ Current radar entries (avoid duplicates):
 {radar_context}
 
 Use web search to research the technology before making your recommendation.
+If URL content is provided below, use it as your primary source and only
+search for additional context if needed.
 Then respond with ONLY a single JSON object, no other text:
 {{"title": "Name", "quadrant": "tools", "ring": "assess", "tags": ["tag1"], "reasoning": "One sentence.", "description": "2-3 sentences.", "entry_markdown": "---\\ntitle: \\"Name\\"\\nring: assess\\nquadrant: tools\\ntags: [tag1]\\n---\\n\\n2-3 sentences."}}"""
 
@@ -42,24 +44,24 @@ WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
 MAX_ITERATIONS = 5
 
 
-def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any]:
+def research_and_recommend(suggestion: str, radar_context: str, url_content: str | None = None) -> dict[str, Any]:
     """Ask Claude to research a technology and recommend placement.
 
-    Uses an agentic loop to handle web search tool calls — Claude may search
-    multiple times before producing the final JSON recommendation.
+    Uses an agentic loop to handle web search tool calls.
+    If url_content is provided it is injected as primary source context.
     """
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     prompt = SYSTEM_PROMPT.format(radar_context=radar_context)
 
-    logger.info("Calling Claude API for: %s", suggestion[:100])
+    # Build user message — inject URL content if available
+    user_message = f"Suggest radar placement for: {suggestion}"
+    if url_content:
+        user_message += f"\n\n<url_content>\n{url_content[:6000]}\n</url_content>"
 
-    messages = [
-        {
-            "role": "user",
-            "content": f"Suggest radar placement for: {suggestion}"
-        }
-    ]
+    logger.info("Calling Claude API for: %s (url=%s)", suggestion[:100], bool(url_content))
+
+    messages = [{"role": "user", "content": user_message}]
 
     iterations = 0
     while iterations < MAX_ITERATIONS:
