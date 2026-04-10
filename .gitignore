@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Azure Functions
+local.settings.json
+.python_packages/
+
+# Environment
+.env
+*.env
+
+# macOS
+.DS_Store
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
