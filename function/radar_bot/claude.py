@@ -23,7 +23,7 @@ The platform is built on:
 
 The radar has four quadrants:
 - tools: CI/CD, testing, analysis, and development tooling
-- platforms: Cloud, hosting, and infrastructure platforms  
+- platforms: Cloud, hosting, and infrastructure platforms
 - languages-frameworks: Programming languages, application frameworks, and ML toolkits
 - techniques: Engineering processes, governance models, and delivery practices
 
@@ -37,22 +37,22 @@ Current radar context (existing entries — avoid duplicates):
 {radar_context}
 
 When given a technology suggestion:
-1. Use web search to research the technology if needed
+1. Research the technology if needed
 2. Consider how it fits the platform context above
 3. Recommend the most appropriate quadrant and ring
 4. Write a concise 2-3 sentence description explaining the placement
 5. Suggest relevant tags from: ci-cd, devops, cloud, ml, mobile, testing, compliance, security, infrastructure, framework, language, monitoring, observability, regulated, governance, process
 
-Respond ONLY with a JSON object in this exact format:
-{{
+Respond ONLY with a JSON object in this exact format, no markdown fences, no preamble:
+{
   "title": "Technology Name",
-  "quadrant": "tools|platforms|languages-frameworks|techniques",
-  "ring": "adopt|trial|assess|hold",
+  "quadrant": "tools",
+  "ring": "assess",
   "tags": ["tag1", "tag2"],
   "reasoning": "One sentence explaining why this quadrant and ring.",
-  "description": "2-3 sentences for the radar entry body. Reference relevant architectural decisions where applicable.",
-  "entry_markdown": "---\\ntitle: \\"Technology Name\\"\\nring: adopt\\nquadrant: tools\\ntags: [tag1, tag2]\\n---\\n\\n2-3 sentence description."
-}}"""
+  "description": "2-3 sentences for the radar entry body.",
+  "entry_markdown": "---\\ntitle: \\"Technology Name\\"\\nring: assess\\nquadrant: tools\\ntags: [tag1, tag2]\\n---\\n\\n2-3 sentence description."
+}"""
 
 
 def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any]:
@@ -62,35 +62,55 @@ def research_and_recommend(suggestion: str, radar_context: str) -> dict[str, Any
 
     prompt = SYSTEM_PROMPT.format(radar_context=radar_context)
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": f"Please research and recommend radar placement for: {suggestion}"
-            }
-        ],
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-    )
+    logger.info("Calling Claude API for suggestion: %s", suggestion[:100])
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Please research and recommend radar placement for: {suggestion}"
+                }
+            ],
+        )
+    except Exception as e:
+        logger.error("Claude API call failed: %s", str(e))
+        raise
+
+    logger.info("Claude response stop_reason: %s", response.stop_reason)
 
     # Extract text content from response
     text_content = ""
     for block in response.content:
-        if block.type == "text":
+        if hasattr(block, "text"):
             text_content += block.text
 
-    # Parse JSON response
+    logger.info("Claude raw response: %s", text_content[:500])
+
+    if not text_content.strip():
+        raise ValueError("Claude returned empty response")
+
     # Strip markdown fences if present
     clean = text_content.strip()
-    if clean.startswith("```"):
-        clean = clean.split("```")[1]
-        if clean.startswith("json"):
-            clean = clean[4:]
+    if "```" in clean:
+        parts = clean.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                clean = part
+                break
     clean = clean.strip()
 
-    return json.loads(clean)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError as e:
+        logger.error("Failed to parse Claude JSON response: %s\nRaw: %s", e, clean[:500])
+        raise
 
 
 def generate_entry(title: str, quadrant: str, ring: str, tags: list[str], description: str) -> str:
